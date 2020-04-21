@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: TriggerManager.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: TriggerManager.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>"use strict";
+
+/**
+ * Create a trigger manager to primarily support the adding and removal of simple triggers
+ * on google sheet.
+ *
+ * @constructor
+ * @returns {Object} The TriggerManager functions.
+ */
+function TriggerManager()
+{
+  var _triggersBySheet = {};
+    
+  return {
+
+    // Add a new trigger for a given sheet, throws an exception if sheet does not exist.
+    // if trigger object is null or undefined, does nothing
+    addTrigger: function( trigger ) {
+
+      if( trigger !== undefined &amp;&amp; trigger !== null ){
+      
+          let sheetName = trigger.getSheetName();          
+          if( SpreadsheetApp.getActive().getSheetByName(sheetName) !== null ){
+      
+              //console.log(`Trigger belongs to ${sheetName}`);
+              if( _triggersBySheet.hasOwnProperty(sheetName) === false )
+                  _triggersBySheet[sheetName] = [];
+   
+              _triggersBySheet[sheetName].push(trigger);
+              
+          }else
+              throw "Unexpected error: Unknown '" + sheetName + "' sheet for trigger.";
+      }
+      return this;
+    },
+    
+    // Add multiple triggers
+    addTriggers: function( triggerArray ) {
+      
+      if( triggerArray.length === 0 ) return;      
+      triggerArray.forEach((trigger) => this.addTrigger(trigger));
+      
+      return this;
+    },
+  
+    // returns array of triggers for a given sheet. Returns undefined if sheet is not found
+    getTriggersBySheet: function( sheetName ) {
+    
+      return _triggersBySheet[sheetName];
+    },
+  
+    // disables all the triggers for a given sheet
+    disableBySheet: function( sheetName ) {
+  
+      if( sheetName !== undefined &amp;&amp; typeof _triggersBySheet[sheetName] !== undefined )    
+          _triggersBySheet[sheetName].forEach(trigger => trigger.disable());
+      
+      return this;
+    },
+  
+    // Enables all the triggers for a given sheet
+    enableBySheet: function( sheetName ) {
+    
+      if( sheetName !== undefined &amp;&amp; typeof _triggersBySheet[sheetName] !== undefined )    
+          _triggersBySheet[sheetName].forEach(trigger => trigger.enable());
+      
+      return this;
+    },
+  
+    fireAll: function(e) {
+  
+      let triggers = _triggersBySheet[e.source.getSheetName()];
+      let row = e.range.getRow();
+      let col = e.range.getColumn();
+      triggers.forEach( (trigger) => trigger.activate(e,row,col) );
+      return this;
+    }
+  };
+}
+
+/**
+ * Create an abstraction of any section (called a Table) of a Google spreadsheet so that read and writes to it
+ * are much faster when the cache is turned on.
+ *
+ * @constructor
+ * @param {string} rangeA1Notation - A range in google sheet, such as "Sheet1!A1:A3" or "R1:C1" format
+ * @param {function} callback - The function to call when the contents of the range is changed
+ * @returns {Object} The Trigger functions.
+ */
+function Trigger( rangeA1Notation, callback )
+{
+  var _name = functionName(callback);
+  var _state = Trigger.ACTIVE;
+  var _callback = callback;
+
+  var _rangeActive = SpreadsheetApp.getActiveSheet().getRange(rangeA1Notation);      
+  var _startRow = _rangeActive.getRow();
+  var _endRow = _rangeActive.getLastRow();
+  var _startCol = _rangeActive.getColumn();
+  var _endCol = _rangeActive.getLastColumn();
+  var _arguments = [...arguments];
+  var _arguments = _arguments.length > 2? _arguments.slice(-(_arguments.length-2)):[];
+  
+//  console.log( `(${_startRow},${_startCol}) - (${_endRow},${_endCol})` );
+
+  /**
+   * Returns the name of the given function.
+   *
+   * @param {function} func - Some Javascript function
+   * @returns {string} Name of input function
+   */
+  function functionName( func ) {
+  
+    var ret = func.toString();
+    ret = ret.substr('function '.length);
+    ret = ret.substr(0, ret.indexOf('('));
+    
+    return ret;
+  };
+
+  return {
+    
+    // The name of the trigger defaults to the function name of
+    // the event handler.
+    setName: function(name) {
+      _name = name;
+    },
+    
+    getName: function() {
+      return _name;
+    },
+    
+    // Get sheetname that this trigger belongs to
+    getSheetName: function() {   
+       return _rangeActive.getSheet().getName();
+    },
+
+    // Checks if this trigger can be fired, returns true if so, else false.
+    // targetRange can be either the Range object or a string in A1 Notation.
+    isActivatable: function(row,col) {
+//      console.log( `Event at (${row},${col})` );
+//      console.log( `Trigger within (${_startRow},${_startCol}) - (${_endRow},${_endCol})` );
+      return (row >= _startRow &amp;&amp; row &lt;= _endRow &amp;&amp; col >= _startCol &amp;&amp; col &lt;= _endCol)? true:false;
+    },
+
+    // activate this trigger if it is activatable and not disabled
+    // else return null.  Note! this function cannot be an arrow function
+    // because 'this' will refer to the enclosing scope.
+    activate: function(event,row,col) {
+    
+      if( _state === Trigger.DISABLED ){
+          //console.log(`Trigger disabled for cell (${event.range.getRow()},${event.range.getColumn()})`);
+          return;
+      }
+    
+      if( this.isActivatable(row,col) === true )
+          _callback(event,row,col,_arguments);
+      
+      return this;
+    },
+  
+    // Disable this trigger
+    disable: function() {
+      _state = Trigger.DISABLED;
+      return this;
+    },
+    
+    // Enable this trigger
+    enable: function() {
+      _state = Trigger.ACTIVE;
+      return this;
+    }
+  };
+}
+
+Trigger.ACTIVE = 1;
+Trigger.DISABLED = 0;</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ctTable.html">ctTable</a></li><li><a href="Stopwatch.html">Stopwatch</a></li><li><a href="Trigger.html">Trigger</a></li><li><a href="TriggerManager.html">TriggerManager</a></li></ul><h3>Global</h3><ul><li><a href="global.html#ctColumns">ctColumns</a></li><li><a href="global.html#ctFlushAll">ctFlushAll</a></li><li><a href="global.html#ctGetRow">ctGetRow</a></li><li><a href="global.html#ctGetRowIndex">ctGetRowIndex</a></li><li><a href="global.html#ctGetValue">ctGetValue</a></li><li><a href="global.html#ctInit">ctInit</a></li><li><a href="global.html#ctNextRow">ctNextRow</a></li><li><a href="global.html#ctRows">ctRows</a></li><li><a href="global.html#ctSetRow">ctSetRow</a></li><li><a href="global.html#ctSetValue">ctSetValue</a></li><li><a href="global.html#onEditTest">onEditTest</a></li><li><a href="global.html#TestCachedTable">TestCachedTable</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 3.6.4</a> on Tue Apr 21 2020 18:23:24 GMT+0800 (Taipei Standard Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
